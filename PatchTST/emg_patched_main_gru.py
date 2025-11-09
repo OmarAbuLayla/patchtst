@@ -103,7 +103,7 @@ def run_epoch(
     start_time = time.perf_counter()
 
     for batch_idx, (inputs, targets) in enumerate(loader, start=1):
-        inputs = inputs.to(device, non_blocking=True)   # (B, seq_len, 64)
+        inputs = inputs.to(device, non_blocking=True)   # (B, seq_len, feature_dim)
         targets = targets.to(device, non_blocking=True)
 
         if is_train:
@@ -159,8 +159,13 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
         num_workers=args.workers,
     )
 
+    feature_dim = loaders["train"].dataset.feature_dim
+    if args.in_channels != feature_dim:
+        print(
+            f"Input dimension mismatch: CLI requested {args.in_channels} but data provides {feature_dim}. Using dataset value."
+        )
     model = EMG_GRU_PatchTST(
-        input_dim=args.in_channels,
+        input_dim=feature_dim,
         hidden_dim=args.gru_hidden,
         num_layers=args.gru_layers,
         num_classes=args.num_classes,

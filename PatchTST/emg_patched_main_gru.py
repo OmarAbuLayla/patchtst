@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=48)
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=50)
@@ -40,10 +40,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-amp", action="store_true")
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--lr-patience", type=int, default=8)
-    parser.add_argument("--in-channels", type=int, default=64, help="Patch length (features per time step)")
-    parser.add_argument("--gru-hidden", type=int, default=256)
+    parser.add_argument("--in-channels", type=int, default=768, help="Features per patch (num_channels × patch_len)")
+    parser.add_argument("--gru-hidden", type=int, default=160)
     parser.add_argument("--gru-layers", type=int, default=2)
-    parser.add_argument("--gru-dropout", type=float, default=0.3)
+    parser.add_argument("--gru-dropout", type=float, default=0.45)
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
     return parser.parse_args()
 
@@ -175,7 +175,7 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", patience=args.lr_patience, factor=0.5, verbose=True
+        optimizer, mode="min", patience=args.lr_patience, factor=0.5, verbose=True
     )
 
     start_epoch = 0
@@ -224,7 +224,7 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
             desc=f"Val {epoch + 1}",
         )
 
-        scheduler.step(val_acc)
+        scheduler.step(val_loss)
         history.append({
             "epoch": epoch + 1,
             "train_loss": train_loss,

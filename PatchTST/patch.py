@@ -34,7 +34,7 @@ splits = ["Train", "Val", "Test"]
 
 # Recommended PatchTST settings for 6-channel, 2000-sample EMG segments.
 patch_len = 128
-stride = 64
+stride = 96  # ≈25% overlap to curb redundancy while preserving continuity
 
 # EMG metadata
 sample_rate = 1000  # Hz

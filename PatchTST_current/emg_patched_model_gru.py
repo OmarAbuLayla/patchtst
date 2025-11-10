@@ -32,7 +32,7 @@ class EMG_GRU_PatchTST(nn.Module):
         hidden_dim: int = 192,     # default width tuned for 6×128 patches
         num_layers: int = 1,       # default to a single layer to curb overfitting
         num_classes: int = 101,    # number of target classes
-        dropout: float = 0.5,      # stronger dropout for regularisation
+        dropout: float = 0.3,      # lighter dropout after diagnostics
         bidirectional: bool = True,
         proj_dim: int = 256,       # bottleneck size before the GRU
     ) -> None:
@@ -63,10 +63,10 @@ class EMG_GRU_PatchTST(nn.Module):
         out_dim = hidden_dim * (2 if bidirectional else 1)
         self.attention = TemporalAttention(out_dim)
         self.sequence_dropout = nn.Dropout(dropout)
-        self.head_dropout = nn.Dropout(0.3)
+        self.head_dropout = nn.Dropout(0.2)
         self.classifier = nn.Sequential(
             nn.LayerNorm(out_dim),
-            nn.Dropout(dropout),
+            nn.Dropout(0.2),
             nn.Linear(out_dim, num_classes),
         )
 

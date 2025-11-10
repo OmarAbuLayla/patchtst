@@ -41,10 +41,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--lr-patience", type=int, default=10)
     parser.add_argument("--in-channels", type=int, default=768, help="Features per patch (num_channels × patch_len)")
-    parser.add_argument("--gru-hidden", type=int, default=144)
+    parser.add_argument("--gru-hidden", type=int, default=192)
     parser.add_argument("--gru-layers", type=int, default=1)
     parser.add_argument("--gru-dropout", type=float, default=0.5)
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
+    parser.add_argument("--use-cosine", action="store_true", help="Use cosine LR schedule instead of ReduceLROnPlateau")
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--patch-dropout", type=float, default=0.2, help="Probability of dropping patches during training")
+    parser.add_argument("--stride-test", type=int, default=96, choices=[64, 96, 128], help="Simulated stride for evaluation")
     return parser.parse_args()
 
 
@@ -92,7 +96,8 @@ def run_epoch(
     max_grad_norm: float,
     desc: str,
     log_interval: int = 0,
-) -> Tuple[float, float]:
+    num_classes: int | None = None,
+) -> Tuple[float, float, torch.Tensor | None, torch.Tensor | None]:
     is_train = optimizer is not None
     model.train(is_train)
 
@@ -101,6 +106,12 @@ def run_epoch(
     total_samples = 0
     num_batches = len(loader)
     start_time = time.perf_counter()
+
+    per_class_correct = None
+    per_class_count = None
+    if not is_train and num_classes is not None:
+        per_class_correct = torch.zeros(num_classes, dtype=torch.long, device=device)
+        per_class_count = torch.zeros(num_classes, dtype=torch.long, device=device)
 
     for batch_idx, (inputs, targets) in enumerate(loader, start=1):
         inputs = inputs.to(device, non_blocking=True)   # (B, seq_len, feature_dim)
@@ -133,6 +144,12 @@ def run_epoch(
         total_correct += (preds == targets).sum().item()
         total_samples += batch_size
 
+        if per_class_correct is not None and per_class_count is not None:
+            per_class_count += torch.bincount(targets, minlength=num_classes)
+            correct_mask = preds == targets
+            if correct_mask.any():
+                per_class_correct += torch.bincount(targets[correct_mask], minlength=num_classes)
+
         if log_interval > 0 and (batch_idx % log_interval == 0 or batch_idx == num_batches):
             elapsed = time.perf_counter() - start_time
             mean_loss = total_loss / max(total_samples, 1)
@@ -142,7 +159,10 @@ def run_epoch(
 
     mean_loss = total_loss / max(total_samples, 1)
     accuracy = total_correct / max(total_samples, 1)
-    return mean_loss, accuracy
+    if per_class_correct is not None and per_class_count is not None:
+        per_class_correct = per_class_correct.cpu()
+        per_class_count = per_class_count.cpu()
+    return mean_loss, accuracy, per_class_correct, per_class_count
 
 
 # --------------------------------------------------------------
@@ -157,6 +177,8 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
         args.dataset_root,
         batch_size=args.batch_size,
         num_workers=args.workers,
+        patch_dropout=args.patch_dropout,
+        stride_test=args.stride_test,
     )
 
     feature_dim = loaders["train"].dataset.feature_dim
@@ -172,11 +194,14 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
         dropout=args.gru_dropout,
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=args.lr_patience, factor=0.5, verbose=True
-    )
+    if args.use_cosine:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    else:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", patience=args.lr_patience, factor=0.5, verbose=True
+        )
 
     start_epoch = 0
     if args.resume:
@@ -191,20 +216,24 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
 
     if args.test_only:
         for split_name in ["val", "test"]:
-            loss, acc = run_epoch(
+            loss, acc, per_class_correct, per_class_count = run_epoch(
                 model,
                 loaders[split_name],
                 criterion,
                 device,
                 max_grad_norm=0.0,
                 desc=f"{split_name} eval",
+                num_classes=args.num_classes,
             )
             print(f"{split_name.capitalize()} split: loss={loss:.4f}, acc={acc:.4f}")
+            if per_class_correct is not None and per_class_count is not None:
+                per_class_acc = (per_class_correct.float() / per_class_count.clamp_min(1)).cpu().numpy()
+                print(f"{split_name.capitalize()} per-class accuracy:", np.round(per_class_acc, 3))
         return
 
     for epoch in range(start_epoch, args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs} | LR={optimizer.param_groups[0]['lr']:.6g}", flush=True)
-        train_loss, train_acc = run_epoch(
+        train_loss, train_acc, _, _ = run_epoch(
             model,
             loaders["train"],
             criterion,
@@ -215,16 +244,24 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
             desc=f"Train {epoch + 1}",
             log_interval=args.log_interval,
         )
-        val_loss, val_acc = run_epoch(
+        val_loss, val_acc, val_correct, val_count = run_epoch(
             model,
             loaders["val"],
             criterion,
             device,
             max_grad_norm=0.0,
             desc=f"Val {epoch + 1}",
+            num_classes=args.num_classes,
         )
 
-        scheduler.step(val_loss)
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_loss)
+        elif scheduler is not None:
+            scheduler.step()
+
+        if val_correct is not None and val_count is not None:
+            per_class_acc = (val_correct.float() / val_count.clamp_min(1)).cpu().numpy()
+            print("Validation per-class accuracy:", np.round(per_class_acc, 3))
         history.append({
             "epoch": epoch + 1,
             "train_loss": train_loss,
@@ -259,7 +296,7 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
     if best_path.exists():
         load_checkpoint(str(best_path), model)
 
-    test_loss, test_acc = run_epoch(
+    test_loss, test_acc, test_correct, test_count = run_epoch(
         model,
         loaders["test"],
         criterion,
@@ -267,8 +304,12 @@ def train_and_evaluate(args: argparse.Namespace) -> None:
         max_grad_norm=0.0,
         desc="Test",
         log_interval=args.log_interval,
+        num_classes=args.num_classes,
     )
     print(f"\nTest set: loss={test_loss:.4f}, acc={test_acc:.4f}")
+    if test_correct is not None and test_count is not None:
+        per_class_acc = (test_correct.float() / test_count.clamp_min(1)).cpu().numpy()
+        print("Test per-class accuracy:", np.round(per_class_acc, 3))
 
     with open(Path(args.save_dir) / "history.json", "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)

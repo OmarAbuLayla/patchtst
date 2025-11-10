@@ -29,7 +29,7 @@ class EMG_GRU_PatchTST(nn.Module):
     def __init__(
         self,
         input_dim: int = 64,       # features per patch (patch_len)
-        hidden_dim: int = 144,     # leaner GRU hidden size for better generalisation
+        hidden_dim: int = 192,     # default width tuned for 6×128 patches
         num_layers: int = 1,       # default to a single layer to curb overfitting
         num_classes: int = 101,    # number of target classes
         dropout: float = 0.5,      # stronger dropout for regularisation
@@ -62,7 +62,8 @@ class EMG_GRU_PatchTST(nn.Module):
 
         out_dim = hidden_dim * (2 if bidirectional else 1)
         self.attention = TemporalAttention(out_dim)
-        self.dropout = nn.Dropout(dropout)
+        self.sequence_dropout = nn.Dropout(dropout)
+        self.head_dropout = nn.Dropout(0.3)
         self.classifier = nn.Sequential(
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout),
@@ -107,7 +108,8 @@ class EMG_GRU_PatchTST(nn.Module):
         """
         x = self.input_proj(x)
         out, _ = self.gru(x)              # (B, seq_len, hidden*dir)
-        out = self.dropout(out)
+        out = self.sequence_dropout(out)
         out = self.attention(out)         # attention pooling over time
+        out = self.head_dropout(out)
         logits = self.classifier(out)     # (B, num_classes)
         return logits

@@ -29,10 +29,10 @@ class EMG_GRU_PatchTST(nn.Module):
     def __init__(
         self,
         input_dim: int = 64,       # features per patch (patch_len)
-        hidden_dim: int = 160,     # GRU hidden size (reduced to curb memorisation)
-        num_layers: int = 2,       # number of GRU layers
+        hidden_dim: int = 144,     # leaner GRU hidden size for better generalisation
+        num_layers: int = 1,       # default to a single layer to curb overfitting
         num_classes: int = 101,    # number of target classes
-        dropout: float = 0.45,     # stronger dropout for regularisation
+        dropout: float = 0.5,      # stronger dropout for regularisation
         bidirectional: bool = True,
         proj_dim: int = 256,       # bottleneck size before the GRU
     ) -> None:
@@ -48,6 +48,7 @@ class EMG_GRU_PatchTST(nn.Module):
             nn.LayerNorm(input_dim),
             nn.Linear(input_dim, proj_dim),
             nn.GELU(),
+            nn.Dropout(p=0.25),  # light dropout before the GRU to regularise tokens
         )
 
         self.gru = nn.GRU(

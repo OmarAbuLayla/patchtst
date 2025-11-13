@@ -1,6 +1,6 @@
 # ==============================================================
 #  Dynamic EMG Dataset (On-the-Fly Patching + Filtering)
-#  Author: Omar A. Layla (real-time patching version, GRU5-compatible)
+#  (real-time patching version, GRU-compatible)
 # ==============================================================
 import os
 import math
@@ -212,3 +212,4 @@ def build_patch_dataloaders(
             pin_memory=torch.cuda.is_available(),
         )
     return loaders
+

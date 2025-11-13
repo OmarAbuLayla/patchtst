@@ -1,8 +1,4 @@
-# ==============================================================
-#  EMG PatchTST GRU Training Script (v6)
-#  - FIXED test-only mode
-#  - Saves every checkpoint epoch_XXX.pt
-# ==============================================================
+
 
 from __future__ import annotations
 
@@ -353,3 +349,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+

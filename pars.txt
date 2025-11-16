@@ -1,0 +1,1 @@
+mg_patched_main_gru7.py --dataset-root "path to dataset" --epochs 114 --lr 8e-4 --min-lr 3e-6 --use-cosine --batch-size 48 --gru-hidden 512 --gru-layers 1 --gru-dropout 0.10 --patch-dropout 0.10 --patch-len 128 --stride 64 --weight-decay 2e-3 --use-amp --max-grad-norm 1.0
